@@ -34,7 +34,7 @@ class dfaMachine:
         
 
 # implementation of minimum dfa for even numbers
-def dfa_even(s: str, machine: dfaMachine = None):
+def RunDFA(s: str, machine: dfaMachine):
     # traversing the DFA machine for given string s
     state = machine.init_state
     for c in s:
@@ -44,8 +44,6 @@ def dfa_even(s: str, machine: dfaMachine = None):
     if state in machine.final_states:
         return True
     return False
-
-    # print(transitions)
 
 '''
     state = init_state
@@ -67,13 +65,13 @@ def dfa_even(s: str, machine: dfaMachine = None):
         return 1
     return 0
 '''
-            
+        
 
-def main():
+def dfa_even(s: str):
     input_symbols = string.ascii_letters + string.digits
     states_labels = (0, 1)
     init_state = states_labels[0]
-    final_states = [states_labels[0]]
+    final_states = [states_labels[0]]  # XXX
     alphanumerics = string.ascii_letters + string.digits
     # initializing in the same way as would for dict object
     transitions = [
@@ -81,16 +79,40 @@ def main():
             ((states_labels[1], alphanumerics), states_labels[0]),
     ]
 
-    my_machine = dfaMachine(
+    even_machine = dfaMachine(
         input_symbols = input_symbols, 
         states_labels = states_labels, 
         init_state = init_state, 
         final_states = final_states, 
         transitions = transitions
     )
-    
-    input_string = "Dumb12"  # length is 6... dfa_even should give True
-    if dfa_even(input_string, machine = my_machine):
+    return RunDFA(s, machine = even_machine)
+
+def dfa_odd(s: str):
+    input_symbols = string.ascii_letters + string.digits
+    states_labels = (0, 1)
+    init_state = states_labels[0]
+    final_states = [states_labels[1]]  # XXX
+    alphanumerics = string.ascii_letters + string.digits
+    # initializing in the same way as would for dict object
+    transitions = [
+            ((states_labels[0], alphanumerics), states_labels[1]),
+            ((states_labels[1], alphanumerics), states_labels[0]),
+    ]
+
+    even_machine = dfaMachine(
+        input_symbols = input_symbols, 
+        states_labels = states_labels, 
+        init_state = init_state, 
+        final_states = final_states, 
+        transitions = transitions
+    )
+    return RunDFA(s, machine = even_machine)
+
+
+def main():
+    input_string = "Dumb1"  # length is 6... dfa_even should give True
+    if dfa_even(input_string):
         print("Wallahi its even it wooorks")
     else:
         print("Well that's odd... hmm")
