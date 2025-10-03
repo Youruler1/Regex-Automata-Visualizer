@@ -130,32 +130,14 @@ def REtoNFA(reg_expression):
     reg_expression = '(' + reg_expression + ')'
     excluded_symbols = {'(', ')', '+', '*'}
     input_symbols = [symbol for symbol in set(reg_expression) if symbol not in excluded_symbols]  # remove() would have thrown error if element not found... discard() doesn't.
+    input_symbols.sort()
+    print(f"input symbols are {input_symbols}")
     # XXX: print the enum_input_symbols to confirm order of symbols' indices for following transition table (nested list)
     # print(input_symbols)
     k = len(input_symbols)
 
-    # finding number of states 'n'
-    '''
-    each read input_symbol in reg_expression is addition of 1 state
-    each read '+' (concatenation) is addition of 2 states if on initial subexpression else 1 state
-    each read '*' (Kleene Closure) is also addition of 2 states if on initial subexpression else 1 state
-    each read 
-    '''
-    
-    # transition_table = []
-    # newState = lambda init_val = None: transition_table.append([init_val] * (k + 1))
-    # stack = deque()
-
-    # # the stack here accounts for state labels like 0,1,2, etc. and corresponding parentheses in the RE for proper sequence in constructions of subexpressions 
-
-    # curr_state_index = 0  # initial state index
-    # newState()
-    # stack.append(0)
-    # count = []
-    # count_last_index = None
-
     class Machine:
-        def __init__(self, *, trans_values = None, input_symbols = None):
+        def __init__(self, *, trans_values = None, input_symbols):
             # self.input_symbols = None
             # self.len_input_symbols = len(self.input_symbols)
             
@@ -202,7 +184,7 @@ def REtoNFA(reg_expression):
             slot = new_relative_transition_table[-2][self.symbols_count]  # points to final state of second machine
             slot[:] = [x for x in slot if x is not None] + [1]  # transition to final state of new machine
 
-            return Machine(trans_values = new_relative_transition_table)
+            return Machine(trans_values = new_relative_transition_table, input_symbols = self.input_symbols)
         
         def Kleene(self) -> Machine:
             new_relative_transition_table = [
@@ -224,7 +206,7 @@ def REtoNFA(reg_expression):
             slot = new_relative_transition_table[0][self.symbols_count]  # points to initial state of new machine
             slot[:] = [x for x in slot if x is not None] + [new_machine_len - 1]  # transition to final state of new machine
 
-            return Machine(new_relative_transition_table)
+            return Machine(trans_values = new_relative_transition_table, input_symbols = self.input_symbols)
         
         def Concatenate(self, second_machine: Machine) -> Machine:
             # adding first machine
@@ -233,15 +215,17 @@ def REtoNFA(reg_expression):
             # combining final state of first machine and initial state of second machine
             common_state = []
             first_final = deepcopy(new_relative_transition_table[-1])
+            first_final = [] if first_final == [None] else first_final
             second_init = deepcopy(second_machine.relative_transition_table[0])
+            first_final = [] if second_init == [None] else second_init
             for symbol_index in range(self.symbols_count + 1):
-                common_state.append(first_final[symbol_index] + second_init[symbol_index])
+                common_state.append(list(set(first_final[symbol_index] + second_init[symbol_index])))
             
             _ = new_relative_transition_table.pop(-1)  # deleting last entry of furst machine in new_relative_transition_table
             new_relative_transition_table.append(common_state)  # adding entry for common state
             new_relative_transition_table += deepcopy(second_machine.relative_transition_table[1:])  # adding second machine except for entry of its initial state (already combined into common_state and added)
 
-            return Machine(trans_values = new_relative_transition_table) 
+            return Machine(trans_values = new_relative_transition_table, input_symbols = self.input_symbols) 
                         
         def concat(self, c) -> None:
             # This function is for some character c and not machines 
@@ -249,8 +233,9 @@ def REtoNFA(reg_expression):
             # Add entry to machine's transition table
             self.relative_transition_table.append([[None] for _ in range(self.symbols_count + 1)])
             
+            print(f"concat operation performed for character {c} with enum as {self.enum_input_symbols[c]}\n btw complete enum is {self.enum_input_symbols}")
             slot = self.relative_transition_table[-2][self.enum_input_symbols[c]]
-            slot = [x for x in slot if x is not None] + [1]
+            slot[:] = [x for x in slot if x is not None] + [1]
             return
             
     operators_stack = deque()
@@ -271,7 +256,10 @@ def REtoNFA(reg_expression):
         if c in input_symbols:
             if sub_machine is None: 
                 sub_machine = Machine(input_symbols = input_symbols)        
+                sub_machine.concat(c)
+                print(f"concatted {c}")
             else:
+                print(f"concatted {c}")
                 sub_machine.concat(c)
         else:
             if sub_machine is not None: 
@@ -292,7 +280,14 @@ def REtoNFA(reg_expression):
 
     # XXX: then why store it as a string in the first place instead of a list in above code???
     postfix_machines_split = postfix_machines.split()
-    print(f"postfix_machines is {postfix_machines}\npostfix_machines_split is {postfix_machines_split}")
+    # print(f"postfix_machines is {postfix_machines}\npostfix_machines_split is {postfix_machines_split}")
+
+    i = -1
+    for submachine in machines:
+        i += 1
+        print(f"SUBMACHINE {i}\n")
+        print(submachine.relative_transition_table)
+        print('\n')
 
     temp_stack = deque()  # will store machines during postfix parsing done below
     for item in postfix_machines_split:
@@ -304,13 +299,23 @@ def REtoNFA(reg_expression):
                 new_machine = first.Union(second)
                 machines.append(new_machine)
                 temp_stack.append(len(machines) - 1)
+                print(f"for Union item {item} the temp_stack is:\n{temp_stack}")
             case '*':
                 first = machines[temp_stack.pop()]
                 new_machine = first.Kleene()
                 machines.append(new_machine)
                 temp_stack.append(len(machines) - 1)
+                print(f"for Kleene item {item} the temp_stack is:\n{temp_stack}")
             case _:
                 temp_stack.append(int(item))
+                print(f"for item {item} the temp_stack is:\n{temp_stack}")
+
+    i = -1
+    for submachine in machines:
+        i += 1
+        print(f"POST SUBMACHINE {i}\n")
+        print(submachine.relative_transition_table)
+        print('\n')
 
 
     # Concatenating all remaining machines in temp_stack
@@ -321,7 +326,7 @@ def REtoNFA(reg_expression):
         machines.append(new_machine)
         temp_stack.append(len(machines) - 1)
 
-    return  temp_stack.pop().relative_transition_table
+    return  machines[temp_stack.pop()].relative_transition_table
     # could also return transition table separately instead of the entire Machine object (which is only internally defined in this function)
 
     '''
