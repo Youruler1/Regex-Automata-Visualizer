@@ -131,7 +131,7 @@ def REtoNFA(reg_expression):
     excluded_symbols = {'(', ')', '+', '*'}
     input_symbols = [symbol for symbol in set(reg_expression) if symbol not in excluded_symbols]  # remove() would have thrown error if element not found... discard() doesn't.
     input_symbols.sort()
-    print(f"input symbols are {input_symbols}")
+    # print(f"input symbols are {input_symbols}")
     # XXX: print the enum_input_symbols to confirm order of symbols' indices for following transition table (nested list)
     # print(input_symbols)
     k = len(input_symbols)
@@ -233,7 +233,7 @@ def REtoNFA(reg_expression):
             # Add entry to machine's transition table
             self.relative_transition_table.append([[None] for _ in range(self.symbols_count + 1)])
             
-            print(f"concat operation performed for character {c} with enum as {self.enum_input_symbols[c]}\n btw complete enum is {self.enum_input_symbols}")
+            # print(f"concat operation performed for character {c} with enum as {self.enum_input_symbols[c]}\n btw complete enum is {self.enum_input_symbols}")
             slot = self.relative_transition_table[-2][self.enum_input_symbols[c]]
             slot[:] = [x for x in slot if x is not None] + [1]
             return
@@ -257,9 +257,9 @@ def REtoNFA(reg_expression):
             if sub_machine is None: 
                 sub_machine = Machine(input_symbols = input_symbols)        
                 sub_machine.concat(c)
-                print(f"concatted {c}")
+                # print(f"concatted {c}")
             else:
-                print(f"concatted {c}")
+                # print(f"concatted {c}")
                 sub_machine.concat(c)
         else:
             if sub_machine is not None: 
@@ -282,12 +282,12 @@ def REtoNFA(reg_expression):
     postfix_machines_split = postfix_machines.split()
     # print(f"postfix_machines is {postfix_machines}\npostfix_machines_split is {postfix_machines_split}")
 
-    i = -1
-    for submachine in machines:
-        i += 1
-        print(f"SUBMACHINE {i}\n")
-        print(submachine.relative_transition_table)
-        print('\n')
+    # i = -1
+    # for submachine in machines:
+    #     i += 1
+    #     print(f"SUBMACHINE {i}\n")
+    #     print(submachine.relative_transition_table)
+    #     print('\n')
 
     temp_stack = deque()  # will store machines during postfix parsing done below
     for item in postfix_machines_split:
@@ -299,23 +299,23 @@ def REtoNFA(reg_expression):
                 new_machine = first.Union(second)
                 machines.append(new_machine)
                 temp_stack.append(len(machines) - 1)
-                print(f"for Union item {item} the temp_stack is:\n{temp_stack}")
+                # print(f"for Union item {item} the temp_stack is:\n{temp_stack}")
             case '*':
                 first = machines[temp_stack.pop()]
                 new_machine = first.Kleene()
                 machines.append(new_machine)
                 temp_stack.append(len(machines) - 1)
-                print(f"for Kleene item {item} the temp_stack is:\n{temp_stack}")
+                # print(f"for Kleene item {item} the temp_stack is:\n{temp_stack}")
             case _:
                 temp_stack.append(int(item))
-                print(f"for item {item} the temp_stack is:\n{temp_stack}")
+                # print(f"for item {item} the temp_stack is:\n{temp_stack}")
 
-    i = -1
-    for submachine in machines:
-        i += 1
-        print(f"POST SUBMACHINE {i}\n")
-        print(submachine.relative_transition_table)
-        print('\n')
+    # i = -1
+    # for submachine in machines:
+    #     i += 1
+    #     print(f"POST SUBMACHINE {i}\n")
+    #     print(submachine.relative_transition_table)
+    #     print('\n')
 
 
     # Concatenating all remaining machines in temp_stack
