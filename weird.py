@@ -113,6 +113,143 @@ def dfa_odd(s: str):
     )
     return RunDFA(s, machine = even_machine)
 
+
+class Machine:
+    def __init__(self, *, rel_trans_values = None, abs_trans_values = None, input_symbols, hasNull = False):
+        # self.input_symbols = None
+        # self.len_input_symbols = len(self.input_symbols)
+        
+        self.input_symbols = input_symbols  # other object parameters' initializations are dependent on this, so current logic only supports input_symbols being const, once initialized.
+        self.symbols_count = len(self.input_symbols)
+        self.enum_input_symbols = dict()
+        for i, symbol in enumerate(self.input_symbols):
+            self.enum_input_symbols[symbol] = i
+        self.hasNull = hasNull
+        if hasNull:
+            # assuming the argument input_symbols doesn't also contain null character (epsilon)
+            self.symbols_count += 1  
+        self.relative_transition_table = [[[None] for _ in range(self.symbols_count)]] if rel_trans_values is None else rel_trans_values 
+        self.absolute_transition_table = [[[None] for _ in range(self.symbols_count)]] if abs_trans_values is None else abs_trans_values
+        # first entry represents the initial state's transitions
+        # relative transition table means:
+        #   transitions for a particular state are recorded as number additional forward index increments until target state, for each target state (3rd dim), for each input_symbol (2nd dim)
+    # TODO: operation methods only meaningfully work if input symbols if two operand machines are the same, and in same sequence in their respective transition tables. Implement for general case.
+    def Union(self, second_machine: Machine) -> Machine:
+        '''
+        Currently this logic is for two input symbols, say {a, b}
+        But when >3 input symbols then we can get expressions like (a + b + c + d) in the RE
+        We parse this two at a time like: (a + (b + (c + d))) each time creating an extra initial and final state of null transitions
+        This is not clean... TODO: implement it cleanly as (a + b + c + d)
+        '''
+        
+        # let the new machine have an initial state and a final state
+        # the initial state has transitions toward the respective intial states of the two operand machines
+        # the final states of both operand machines each have transition toward the final state of the new machine
+        # initalizing transition table of new machine with initial and final state
+        new_relative_transition_table = [[[None] for _ in range(self.symbols_count)] for _ in range(2)]  # recall that self.symbols_count is the number of input symbols
+        # ADDING THE FIRST MACHINE TO THE NEW MACHINE
+        slot = new_relative_transition_table[-2][self.symbols_count - 1]  # points to initial state of new machine
+        slot[:] = [x for x in slot if x is not None] + [1]  # null transition to the initial state of first machine that is to be added to the table
+        # using slice assignment to insert first machine's transition table into that of new machine...
+        new_relative_transition_table[1:1] = deepcopy(self.relative_transition_table)
+        slot = new_relative_transition_table[-2][self.symbols_count - 1]  # points to final state of first machine 
+        slot[:] = [x for x in slot if x is not None] + [len(second_machine.relative_transition_table) + 1]  # null transition to new machine's final state
+        # ADDING SECOND MACHINE TO THE NEW MACHINE
+        slot = new_relative_transition_table[0][self.symbols_count - 1]  # points to initial state of new machine
+        machine2_initstate_index = len(new_relative_transition_table) - 1
+        slot[:] = [x for x in slot if x is not None] + [machine2_initstate_index]  # null transition to the initial state of second machine that is to be added to the table
+        new_relative_transition_table[machine2_initstate_index:machine2_initstate_index] = deepcopy(second_machine.relative_transition_table)
+        slot = new_relative_transition_table[-2][self.symbols_count - 1]  # points to final state of second machine
+        slot[:] = [x for x in slot if x is not None] + [1]  # transition to final state of new machine
+        return Machine(rel_trans_values = new_relative_transition_table, input_symbols = self.input_symbols)
+    
+    def Kleene(self) -> Machine:
+        new_relative_transition_table = [
+            [[None] for _ in range(self.symbols_count)],
+            [[None] for _ in range(self.symbols_count)],
+        ]
+        slot = new_relative_transition_table[-2][self.symbols_count - 1]  # points to initial state of new machine
+        slot[:] = [x for x in slot if x is not None] + [1]  # null transition to the initial state of input machine that is to be added to the table
+        # Adding current machine to new machine
+        new_relative_transition_table[1:1] = deepcopy(self.relative_transition_table)
+        slot = new_relative_transition_table[-2][self.symbols_count - 1]  # points to final state of current machine
+        new_machine_len = len(new_relative_transition_table)
+        slot[:] = [x for x in slot if x is not None] + [new_machine_len]  # null transition to the final state of new machine
+        slot[:] = [x for x in slot if x is not None] + [-(new_machine_len - 3)]  # backward null transition to the initial state of current machine
+        # Wrt above statement, note again that transitions are relative by index, and not absolute references
+        slot = new_relative_transition_table[0][self.symbols_count - 1]  # points to initial state of new machine
+        slot[:] = [x for x in slot if x is not None] + [new_machine_len - 1]  # transition to final state of new machine
+        return Machine(rel_trans_values = new_relative_transition_table, input_symbols = self.input_symbols)
+    
+    def Concatenate(self, second_machine: Machine) -> Machine:
+        # adding first machine
+        new_relative_transition_table = deepcopy(self.relative_transition_table)
+        # combining final state of first machine and initial state of second machine
+        common_state = []
+        first_final = deepcopy(new_relative_transition_table[-1])
+        first_final = [] if first_final == [None] else first_final
+        second_init = deepcopy(second_machine.relative_transition_table[0])
+        first_final = [] if second_init == [None] else second_init
+        for symbol_index in range(self.symbols_count):
+            common_state.append(list(set(first_final[symbol_index] + second_init[symbol_index])))
+        
+        _ = new_relative_transition_table.pop(-1)  # deleting last entry of furst machine in new_relative_transition_table
+        new_relative_transition_table.append(common_state)  # adding entry for common state
+        new_relative_transition_table += deepcopy(second_machine.relative_transition_table[1:])  # adding second machine except for entry of its initial state (already combined into common_state and added)
+        return Machine(rel_trans_values = new_relative_transition_table, input_symbols = self.input_symbols) 
+                    
+    def concat(self, c) -> None:
+        # This function is for some character c and not machines 
+        # Add entry to machine's transition table
+        self.relative_transition_table.append([[None] for _ in range(self.symbols_count)])
+        
+        # print(f"concat operation performed for character {c} with enum as {self.enum_input_symbols[c]}\n btw complete enum is {self.enum_input_symbols}")
+        slot = self.relative_transition_table[-2][self.enum_input_symbols[c]]
+        slot[:] = [x for x in slot if x is not None] + [1]
+        return
+    
+    def Rel2Abs(self) -> None:
+        i = -1
+        cpy_rel_table = deepcopy(self.relative_transition_table)
+        for state_entry in cpy_rel_table:
+            i += 1
+            for slot in state_entry:
+                if slot == [None]: continue
+                slot[:] = [x + i for x in slot]
+        self.absolute_transition_table = cpy_rel_table
+        return
+    
+    def Abs2Rel(self) -> None:
+        i = -1
+        cpy_abs_table = deepcopy(self.absolute_transition_table)
+        for state_entry in cpy_abs_table:
+            i += 1
+            for slot in state_entry:
+                if slot == [None]: continue
+                slot[:] = [x - i for x in slot]
+        self.relative_transition_table = cpy_abs_table
+        return
+    
+    class _ImproperParamsInput(Exception):
+        def __init__(self, message="An Improper value was entered as argument for Machine class' method."):
+            self.message = message
+            super().__init__(self.message)
+
+    def Finalize(self, *, last_updated: str) -> None:
+        # both relative and absolute tables are updated to synchronize with the specified last updated table 
+        allowed_input = {'relative', 'absolute'}
+        if last_updated not in allowed_input: raise self._ImproperParamsInput("Improper value passed for last_updated in Machine.Finalize(). Must be either 'relative' or 'absolute'.")
+        if last_updated == 'relative':
+            self.Rel2Abs()
+        else:
+            self.Abs2Rel()
+        # # machine must have either relative_transition_table or absolute_transition_table properly filled... need to identify which one.
+        # # to do that, compare with the initialization value in __init__()
+        # table_init_value = [[[None] for _ in range(self.symbols_count)]]
+        #     if not self.relative_transition_table == table_init_value: self.Rel2Abs()
+        #     if not self.absolute_transition_table == table_init_value: self.Abs2Rel()
+        return
+
 def REtoNFA(reg_expression):
     # XXX: Using Thomson Subset Construciton for RE to NFA
     # assuming a string of fixed format for operators, etc. in the reg_expression
@@ -135,108 +272,6 @@ def REtoNFA(reg_expression):
     # XXX: print the enum_input_symbols to confirm order of symbols' indices for following transition table (nested list)
     # print(input_symbols)
     k = len(input_symbols)
-
-    class Machine:
-        def __init__(self, *, trans_values = None, input_symbols):
-            # self.input_symbols = None
-            # self.len_input_symbols = len(self.input_symbols)
-            
-            self.input_symbols = input_symbols
-            self.symbols_count = len(self.input_symbols)
-            self.enum_input_symbols = dict()
-            for i, symbol in enumerate(self.input_symbols):
-                self.enum_input_symbols[symbol] = i
-            self.relative_transition_table = [[[None] for _ in range(self.symbols_count + 1)]] if trans_values is None else trans_values 
-            # first entry represents the initial state's transitions
-            # relative transition table means:
-            #   transitions for a particular state are recorded as number additional forward index increments until target state, for each target state (3rd dim), for each input_symbol (2nd dim)
-
-        # TODO: operation methods only meaningfully work if input symbols if two operand machines are the same, and in same sequence in their respective transition tables. Implement for general case.
-
-        def Union(self, second_machine: Machine) -> Machine:
-            '''
-            Currently this logic is for two input symbols, say {a, b}
-            But when >3 input symbols then we can get expressions like (a + b + c + d) in the RE
-            We parse this two at a time like: (a + (b + (c + d))) each time creating an extra initial and final state of null transitions
-            This is not clean... TODO: implement it cleanly as (a + b + c + d)
-            '''
-            
-            # let the new machine have an initial state and a final state
-            # the initial state has transitions toward the respective intial states of the two operand machines
-            # the final states of both operand machines each have transition toward the final state of the new machine
-
-            # initalizing transition table of new machine with initial and final state
-            new_relative_transition_table = [[[None] for _ in range(self.symbols_count + 1)] for _ in range(2)]  # recall that self.symbols_count is the number of input symbols
-
-            # ADDING THE FIRST MACHINE TO THE NEW MACHINE
-            slot = new_relative_transition_table[-2][self.symbols_count]  # points to initial state of new machine
-            slot[:] = [x for x in slot if x is not None] + [1]  # null transition to the initial state of first machine that is to be added to the table
-            # using slice assignment to insert first machine's transition table into that of new machine...
-            new_relative_transition_table[1:1] = deepcopy(self.relative_transition_table)
-            slot = new_relative_transition_table[-2][self.symbols_count]  # points to final state of first machine 
-            slot[:] = [x for x in slot if x is not None] + [len(second_machine.relative_transition_table) + 1]  # null transition to new machine's final state
-
-            # ADDING SECOND MACHINE TO THE NEW MACHINE
-            slot = new_relative_transition_table[0][self.symbols_count]  # points to initial state of new machine
-            machine2_initstate_index = len(new_relative_transition_table) - 1
-            slot[:] = [x for x in slot if x is not None] + [machine2_initstate_index]  # null transition to the initial state of second machine that is to be added to the table
-            new_relative_transition_table[machine2_initstate_index:machine2_initstate_index] = deepcopy(second_machine.relative_transition_table)
-            slot = new_relative_transition_table[-2][self.symbols_count]  # points to final state of second machine
-            slot[:] = [x for x in slot if x is not None] + [1]  # transition to final state of new machine
-
-            return Machine(trans_values = new_relative_transition_table, input_symbols = self.input_symbols)
-        
-        def Kleene(self) -> Machine:
-            new_relative_transition_table = [
-                [[None] for _ in range(self.symbols_count + 1)],
-                [[None] for _ in range(self.symbols_count + 1)],
-            ]
-            slot = new_relative_transition_table[-2][self.symbols_count]  # points to initial state of new machine
-            slot[:] = [x for x in slot if x is not None] + [1]  # null transition to the initial state of input machine that is to be added to the table
-
-            # Adding current machine to new machine
-            new_relative_transition_table[1:1] = deepcopy(self.relative_transition_table)
-
-            slot = new_relative_transition_table[-2][self.symbols_count]  # points to final state of current machine
-            new_machine_len = len(new_relative_transition_table)
-            slot[:] = [x for x in slot if x is not None] + [new_machine_len]  # null transition to the final state of new machine
-            slot[:] = [x for x in slot if x is not None] + [-(new_machine_len - 3)]  # backward null transition to the initial state of current machine
-            # Wrt above statement, note again that transitions are relative by index, and not absolute references
-
-            slot = new_relative_transition_table[0][self.symbols_count]  # points to initial state of new machine
-            slot[:] = [x for x in slot if x is not None] + [new_machine_len - 1]  # transition to final state of new machine
-
-            return Machine(trans_values = new_relative_transition_table, input_symbols = self.input_symbols)
-        
-        def Concatenate(self, second_machine: Machine) -> Machine:
-            # adding first machine
-            new_relative_transition_table = deepcopy(self.relative_transition_table)
-
-            # combining final state of first machine and initial state of second machine
-            common_state = []
-            first_final = deepcopy(new_relative_transition_table[-1])
-            first_final = [] if first_final == [None] else first_final
-            second_init = deepcopy(second_machine.relative_transition_table[0])
-            first_final = [] if second_init == [None] else second_init
-            for symbol_index in range(self.symbols_count + 1):
-                common_state.append(list(set(first_final[symbol_index] + second_init[symbol_index])))
-            
-            _ = new_relative_transition_table.pop(-1)  # deleting last entry of furst machine in new_relative_transition_table
-            new_relative_transition_table.append(common_state)  # adding entry for common state
-            new_relative_transition_table += deepcopy(second_machine.relative_transition_table[1:])  # adding second machine except for entry of its initial state (already combined into common_state and added)
-
-            return Machine(trans_values = new_relative_transition_table, input_symbols = self.input_symbols) 
-                        
-        def concat(self, c) -> None:
-            # This function is for some character c and not machines 
-
-            # Add entry to machine's transition table
-            self.relative_transition_table.append([[None] for _ in range(self.symbols_count + 1)])
-            
-            # print(f"concat operation performed for character {c} with enum as {self.enum_input_symbols[c]}\n btw complete enum is {self.enum_input_symbols}")
-            slot = self.relative_transition_table[-2][self.enum_input_symbols[c]]
-            slot[:] = [x for x in slot if x is not None] + [1]
-            return
             
     operators_stack = deque()
     operators_stack.append('(')
@@ -255,7 +290,7 @@ def REtoNFA(reg_expression):
     for c in reg_expression:
         if c in input_symbols:
             if sub_machine is None: 
-                sub_machine = Machine(input_symbols = input_symbols)        
+                sub_machine = Machine(input_symbols = input_symbols, hasNull = True)        
                 sub_machine.concat(c)
                 # print(f"concatted {c}")
             else:
@@ -326,7 +361,10 @@ def REtoNFA(reg_expression):
         machines.append(new_machine)
         temp_stack.append(len(machines) - 1)
 
-    return  machines[temp_stack.pop()].relative_transition_table
+    result_machine: Machine = machines[temp_stack.pop()]
+    result_machine.Finalize(last_updated = 'relative')
+
+    return  result_machine
     # could also return transition table separately instead of the entire Machine object (which is only internally defined in this function)
 
     '''
@@ -396,6 +434,87 @@ def REtoNFA(reg_expression):
     '''
 
             
+class ImproperParamsInput(Exception):
+    def __init__(self, message="An Improper value was entered as argument"):
+        self.message = message
+        super().__init__(self.message)
+            
+def NFAtoDFA(NFA: Machine) -> Machine:
+    # defining a function to take NULL-CLOSURE of a given subset of states of the (null or not null-) NFA
+    # The NULL-CLOSURE returns a subset of states, which if unique, is added to a set and queue
+    # these subsets will be uniquely stored in a set and labeled (enumerated) 
+    # those unique labels will correspond to the states of the resulting DFA
+    
+    if not NFA.hasNull: raise ImproperParamsInput("Machine object passed to NFAtoDFA() must be an NFA.")
+    
+    # will be using the absolute transition table of given NFA
+    input_symbols = deepcopy(NFA.input_symbols)
+
+    def NullClosure(m: Machine, subset: set) -> set:
+        if not m.hasNull: return set()  # returns empty set if machine m has no null transitions
+        if subset == set(): return set()  # base case of recursion
+        machine_cpy: Machine = deepcopy(m)
+        subset_cpy: set = deepcopy(subset)
+        null_slot_index = machine_cpy.enum_input_symbols - 1
+        result_set: set = deepcopy(subset_cpy)  # since each state has an implicit null transition to itself
+        # the last column in the transition table is for null transitions
+        # recursively find null closures of all targets of null transitions for each state in the input subset (subset_cpy)
+        # append their results to the result_set, and finally resturn the result_set
+        next_target_subset = set()
+        for state in subset_cpy:
+            # state corresponds to index of state's entry in transition table
+            null_slot = machine_cpy.absolute_transition_table[state][null_slot_index]
+            if null_slot == [None]: continue
+            # recursion risks going on endlessly if null_slot of a particular state contains index of that state itself, which is technically correct and possible but usually redundant 
+            # hence original subset subset_cpy must be subtracted from the next_target_subset
+            next_target_subset.update(deepcopy(null_slot))
+            next_target_subset = next_target_subset.difference(subset_cpy)
+            result_set.update(NullClosure(machine_cpy, next_target_subset))
+        return result_set
+    
+    unique_subsets = []  # these subsets will one-one map to states in the DFA
+    add_to_unique_subsets = lambda x: list(dict.fromkeys(unique_subsets.append(x)))
+    state_queue = deque()
+
+    init_dfa_state = NullClosure(NFA, {0})  
+    state_queue.append(init_dfa_state)  # initializing queue with null closure of initial state of NFA
+    unique_subsets.add(init_dfa_state)
+
+    DFA_table = []  # dimensions would be len(unique_subsets) x (NFA.symbols_count - 1) x m 
+
+    i = -1
+    while(state_queue):
+        i += 1
+        curr_dfa_state: set = state_queue.popleft()
+        input_wise_targets = [[None] for _ in range(NFA.symbols_count - 1)]  # recording aggregate set of target states for the non-null inputs for the current dfa state
+        for i in range(NFA.symbols_count - 1):
+            slot: list = input_wise_targets[i]
+            for nfa_state in curr_dfa_state:
+                slot.append(NFA.absolute_transition_table[nfa_state][i])
+            slot[:] = [val for val in slot if val is not None]
+            slot[:] = list(set(slot))
+        # Now we have all the input wise target states for the current dfa state
+        # overwriting all subsets in input_wise_targets with their null closures
+        # storing and queueing all the unique ones
+        for element in input_wise_targets:
+            element_closure = NullClosure(NFA, element)
+            if element not in unique_subsets:
+                add_to_unique_subsets(deepcopy(element_closure))
+                state_queue.append(deepcopy(element_closure))
+                DFA_table.append([[None] for _ in range(NFA.symbols_count - 1]))
+        input_wise_targets[:] = [unique_subsets.index(element) for element in input_wise_targets]
+        DFA_table.append(deepcopy(input_wise_targets))
+
+    DFA = Machine(input_symbols = input_symbols, abs_trans_values = DFA_table, hasNull = False)
+    DFA.Finalize()
+    
+    return DFA
+
+                
+                
+                
+                
+                
         
 
 def main():
