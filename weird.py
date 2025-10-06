@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Deque, List
 import string 
 import re
-from collections import deque
+from collections import deque, OrderedDict
 import sys
 from copy import deepcopy
 
@@ -161,7 +161,7 @@ class Machine:
         new_relative_transition_table[machine2_initstate_index:machine2_initstate_index] = deepcopy(second_machine.relative_transition_table)
         slot = new_relative_transition_table[-2][self.symbols_count - 1]  # points to final state of second machine
         slot[:] = [x for x in slot if x is not None] + [1]  # transition to final state of new machine
-        return Machine(rel_trans_values = new_relative_transition_table, input_symbols = self.input_symbols)
+        return Machine(rel_trans_values = new_relative_transition_table, input_symbols = self.input_symbols, hasNull = self.hasNull or second_machine.hasNull)
     
     def Kleene(self) -> Machine:
         new_relative_transition_table = [
@@ -174,12 +174,12 @@ class Machine:
         new_relative_transition_table[1:1] = deepcopy(self.relative_transition_table)
         slot = new_relative_transition_table[-2][self.symbols_count - 1]  # points to final state of current machine
         new_machine_len = len(new_relative_transition_table)
-        slot[:] = [x for x in slot if x is not None] + [new_machine_len]  # null transition to the final state of new machine
+        slot[:] = [x for x in slot if x is not None] + [1]  # null transition to the final state of new machine
         slot[:] = [x for x in slot if x is not None] + [-(new_machine_len - 3)]  # backward null transition to the initial state of current machine
         # Wrt above statement, note again that transitions are relative by index, and not absolute references
         slot = new_relative_transition_table[0][self.symbols_count - 1]  # points to initial state of new machine
         slot[:] = [x for x in slot if x is not None] + [new_machine_len - 1]  # transition to final state of new machine
-        return Machine(rel_trans_values = new_relative_transition_table, input_symbols = self.input_symbols)
+        return Machine(rel_trans_values = new_relative_transition_table, input_symbols = self.input_symbols, hasNull = self.hasNull)
     
     def Concatenate(self, second_machine: Machine) -> Machine:
         # adding first machine
@@ -196,7 +196,7 @@ class Machine:
         _ = new_relative_transition_table.pop(-1)  # deleting last entry of furst machine in new_relative_transition_table
         new_relative_transition_table.append(common_state)  # adding entry for common state
         new_relative_transition_table += deepcopy(second_machine.relative_transition_table[1:])  # adding second machine except for entry of its initial state (already combined into common_state and added)
-        return Machine(rel_trans_values = new_relative_transition_table, input_symbols = self.input_symbols) 
+        return Machine(rel_trans_values = new_relative_transition_table, input_symbols = self.input_symbols, hasNull = self.hasNull or second_machine.hasNull) 
                     
     def concat(self, c) -> None:
         # This function is for some character c and not machines 
@@ -454,8 +454,8 @@ def NFAtoDFA(NFA: Machine) -> Machine:
         if not m.hasNull: return set()  # returns empty set if machine m has no null transitions
         if subset == set(): return set()  # base case of recursion
         machine_cpy: Machine = deepcopy(m)
-        subset_cpy: set = deepcopy(subset)
-        null_slot_index = machine_cpy.enum_input_symbols - 1
+        subset_cpy: set = deepcopy(set(subset))
+        null_slot_index = machine_cpy.symbols_count - 1
         result_set: set = deepcopy(subset_cpy)  # since each state has an implicit null transition to itself
         # the last column in the transition table is for null transitions
         # recursively find null closures of all targets of null transitions for each state in the input subset (subset_cpy)
@@ -473,40 +473,55 @@ def NFAtoDFA(NFA: Machine) -> Machine:
         return result_set
     
     unique_subsets = []  # these subsets will one-one map to states in the DFA
-    add_to_unique_subsets = lambda x: list(dict.fromkeys(unique_subsets.append(x)))
+    def add_to_unique_subsets(x):
+        nonlocal unique_subsets
+        unique_subsets.append(tuple(x))
+        unique_subsets = list(OrderedDict.fromkeys(unique_subsets))
+        return
     state_queue = deque()
 
-    init_dfa_state = NullClosure(NFA, {0})  
+    init_dfa_state = tuple(NullClosure(NFA, {0})) 
     state_queue.append(init_dfa_state)  # initializing queue with null closure of initial state of NFA
-    unique_subsets.add(init_dfa_state)
+    add_to_unique_subsets(init_dfa_state)
 
     DFA_table = []  # dimensions would be len(unique_subsets) x (NFA.symbols_count - 1) x m 
 
-    i = -1
     while(state_queue):
-        i += 1
-        curr_dfa_state: set = state_queue.popleft()
+        curr_dfa_state: tuple = state_queue.popleft()
+        print(f"CURRENT DFA STATE IS {curr_dfa_state}")
         input_wise_targets = [[None] for _ in range(NFA.symbols_count - 1)]  # recording aggregate set of target states for the non-null inputs for the current dfa state
-        for i in range(NFA.symbols_count - 1):
-            slot: list = input_wise_targets[i]
+        # note that while input_wise_targets is initialized as list of lists, it will end up as a list of tuples toward the end of this loop's iteration 
+
+        for input_symbol_index in range(NFA.symbols_count - 1):
+            slot: list = input_wise_targets[input_symbol_index]  # slot holds target states for a particular input symbol... this is done for all the nfa states that compose the current dfa state
             for nfa_state in curr_dfa_state:
-                slot.append(NFA.absolute_transition_table[nfa_state][i])
-            slot[:] = [val for val in slot if val is not None]
-            slot[:] = list(set(slot))
-        # Now we have all the input wise target states for the current dfa state
-        # overwriting all subsets in input_wise_targets with their null closures
-        # storing and queueing all the unique ones
-        for element in input_wise_targets:
-            element_closure = NullClosure(NFA, element)
-            if element not in unique_subsets:
-                add_to_unique_subsets(deepcopy(element_closure))
-                state_queue.append(deepcopy(element_closure))
-                DFA_table.append([[None] for _ in range(NFA.symbols_count - 1]))
-        input_wise_targets[:] = [unique_subsets.index(element) for element in input_wise_targets]
+                slot[:] += deepcopy(NFA.absolute_transition_table[nfa_state][input_symbol_index])  
+            slot[:] = [val for val in slot if val is not None]  # removing None values
+            slot[:] = list(set(slot))  # removing duplicates
+            print(f"for input index {input_symbol_index}/{NFA.symbols_count - 1} direct target states are:\n{slot}")
+
+            # Now we have all the input wise target states for the current dfa state
+            # overwriting all subsets in input_wise_targets with their null closures
+            # storing and queueing all the unique ones
+            slot[:] = NullClosure(NFA, slot)
+            if tuple(slot) not in unique_subsets:
+                add_to_unique_subsets(deepcopy(slot))
+                state_queue.append(tuple(deepcopy(slot)))
+
+            print(f"for input index {input_symbol_index}/{NFA.symbols_count - 1} target states after CLOSURE are:\n{slot}")
+
+        input_wise_targets = [tuple(element) for element in input_wise_targets]  # # locking it to a hashable type tuple in sync with its storage in unique_subsets
+
+        print(f"\nunique_subsets: {unique_subsets}")
+        print(f"\ninput_wise_targets: {input_wise_targets}\n\n")
+        
+        input_wise_targets[:] = [[unique_subsets.index(element)] for element in input_wise_targets]
         DFA_table.append(deepcopy(input_wise_targets))
 
+    print(f"\n\n\nDFA TABLE: \n{DFA_table}")
+
     DFA = Machine(input_symbols = input_symbols, abs_trans_values = DFA_table, hasNull = False)
-    DFA.Finalize()
+    DFA.Finalize(last_updated = 'absolute')
     
     return DFA
 
@@ -530,11 +545,14 @@ def main():
     # INPUT RE
     # GENERATING NFA USING THOMSON'S CONSTRUCTION
     NFA = REtoNFA(reg_expression)
-    print(NFA)
+    print(NFA.relative_transition_table)
+    print(NFA.absolute_transition_table)
+
 
     # INPUT NFA
     # GENERATING DFA USING SUBSET CONSTRUCTION 
-
+    DFA = NFAtoDFA(NFA)
+    print(DFA)
 
     # INPUT NON-MIMINIMUM DFA
     # MINIMIZING DFA GENERATED
