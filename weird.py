@@ -1,6 +1,6 @@
 # imports
 from __future__ import annotations
-from typing import Deque, List
+from typing import Deque, List, Optional
 import string 
 import re
 from collections import deque, OrderedDict
@@ -115,7 +115,7 @@ def dfa_odd(s: str):
 
 
 class Machine:
-    def __init__(self, *, rel_trans_values = None, abs_trans_values = None, input_symbols, hasNull = False):
+    def __init__(self, *, rel_trans_values = None, abs_trans_values = None, input_symbols, final_states = None, hasNull = False):
         # self.input_symbols = None
         # self.len_input_symbols = len(self.input_symbols)
         
@@ -130,6 +130,7 @@ class Machine:
             self.symbols_count += 1  
         self.relative_transition_table = [[[None] for _ in range(self.symbols_count)]] if rel_trans_values is None else rel_trans_values 
         self.absolute_transition_table = [[[None] for _ in range(self.symbols_count)]] if abs_trans_values is None else abs_trans_values
+        self.final_states = final_states
         # first entry represents the initial state's transitions
         # relative transition table means:
         #   transitions for a particular state are recorded as number additional forward index increments until target state, for each target state (3rd dim), for each input_symbol (2nd dim)
@@ -161,7 +162,12 @@ class Machine:
         new_relative_transition_table[machine2_initstate_index:machine2_initstate_index] = deepcopy(second_machine.relative_transition_table)
         slot = new_relative_transition_table[-2][self.symbols_count - 1]  # points to final state of second machine
         slot[:] = [x for x in slot if x is not None] + [1]  # transition to final state of new machine
-        return Machine(rel_trans_values = new_relative_transition_table, input_symbols = self.input_symbols, hasNull = self.hasNull or second_machine.hasNull)
+        return Machine(
+            rel_trans_values = new_relative_transition_table, 
+            input_symbols = self.input_symbols, 
+            final_states = [len(new_relative_transition_table) - 1],
+            hasNull = self.hasNull or second_machine.hasNull
+        )
     
     def Kleene(self) -> Machine:
         new_relative_transition_table = [
@@ -179,7 +185,12 @@ class Machine:
         # Wrt above statement, note again that transitions are relative by index, and not absolute references
         slot = new_relative_transition_table[0][self.symbols_count - 1]  # points to initial state of new machine
         slot[:] = [x for x in slot if x is not None] + [new_machine_len - 1]  # transition to final state of new machine
-        return Machine(rel_trans_values = new_relative_transition_table, input_symbols = self.input_symbols, hasNull = self.hasNull)
+        return Machine(
+            rel_trans_values = new_relative_transition_table, 
+            input_symbols = self.input_symbols, 
+            final_states = [len(new_relative_transition_table) - 1],
+            hasNull = self.hasNull
+        )
     
     def Concatenate(self, second_machine: Machine) -> Machine:
         # adding first machine
@@ -196,7 +207,12 @@ class Machine:
         _ = new_relative_transition_table.pop(-1)  # deleting last entry of furst machine in new_relative_transition_table
         new_relative_transition_table.append(common_state)  # adding entry for common state
         new_relative_transition_table += deepcopy(second_machine.relative_transition_table[1:])  # adding second machine except for entry of its initial state (already combined into common_state and added)
-        return Machine(rel_trans_values = new_relative_transition_table, input_symbols = self.input_symbols, hasNull = self.hasNull or second_machine.hasNull) 
+        return Machine(
+            rel_trans_values = new_relative_transition_table, 
+            input_symbols = self.input_symbols, 
+            final_states = [len(new_relative_transition_table) - 1],
+            hasNull = self.hasNull or second_machine.hasNull,
+        ) 
                     
     def concat(self, c) -> None:
         # This function is for some character c and not machines 
@@ -249,6 +265,9 @@ class Machine:
         #     if not self.relative_transition_table == table_init_value: self.Rel2Abs()
         #     if not self.absolute_transition_table == table_init_value: self.Abs2Rel()
         return
+    
+    def __str__(self):
+        return f"\nInput Symbols: {self.input_symbols}\nColumn index mappings of input symbols: {self.enum_input_symbols}\nNull Transitions: {self.hasNull}\nRel-Trans-Table: {self.relative_transition_table}\nAbs-Trans_Table: {self.absolute_transition_table}\nFinal States: {self.final_states}"
 
 def REtoNFA(reg_expression):
     # XXX: Using Thomson Subset Construciton for RE to NFA
@@ -473,11 +492,23 @@ def NFAtoDFA(NFA: Machine) -> Machine:
         return result_set
     
     unique_subsets = []  # these subsets will one-one map to states in the DFA
+    DFA_final_states = []
+    
     def add_to_unique_subsets(x):
         nonlocal unique_subsets
         unique_subsets.append(tuple(x))
         unique_subsets = list(OrderedDict.fromkeys(unique_subsets))
         return
+    
+    def check_add_final_state(null_closed_subset: tuple):
+        nonlocal NFA, DFA_final_states
+        for nfa_state in null_closed_subset:
+            if nfa_state in NFA.final_states:
+                DFA_final_states.append(unique_subsets.index(null_closed_subset))
+                DFA_final_states = list(set(DFA_final_states))
+                return
+        return 
+
     state_queue = deque()
 
     init_dfa_state = tuple(NullClosure(NFA, {0})) 
@@ -488,7 +519,7 @@ def NFAtoDFA(NFA: Machine) -> Machine:
 
     while(state_queue):
         curr_dfa_state: tuple = state_queue.popleft()
-        print(f"CURRENT DFA STATE IS {curr_dfa_state}")
+        # print(f"CURRENT DFA STATE IS {curr_dfa_state}")
         input_wise_targets = [[None] for _ in range(NFA.symbols_count - 1)]  # recording aggregate set of target states for the non-null inputs for the current dfa state
         # note that while input_wise_targets is initialized as list of lists, it will end up as a list of tuples toward the end of this loop's iteration 
 
@@ -498,7 +529,7 @@ def NFAtoDFA(NFA: Machine) -> Machine:
                 slot[:] += deepcopy(NFA.absolute_transition_table[nfa_state][input_symbol_index])  
             slot[:] = [val for val in slot if val is not None]  # removing None values
             slot[:] = list(set(slot))  # removing duplicates
-            print(f"for input index {input_symbol_index}/{NFA.symbols_count - 1} direct target states are:\n{slot}")
+            # print(f"for input index {input_symbol_index}/{NFA.symbols_count - 1} direct target states are:\n{slot}")
 
             # Now we have all the input wise target states for the current dfa state
             # overwriting all subsets in input_wise_targets with their null closures
@@ -507,27 +538,132 @@ def NFAtoDFA(NFA: Machine) -> Machine:
             if tuple(slot) not in unique_subsets:
                 add_to_unique_subsets(deepcopy(slot))
                 state_queue.append(tuple(deepcopy(slot)))
+                check_add_final_state(tuple(deepcopy(slot)))
 
-            print(f"for input index {input_symbol_index}/{NFA.symbols_count - 1} target states after CLOSURE are:\n{slot}")
+            # print(f"for input index {input_symbol_index}/{NFA.symbols_count - 1} target states after CLOSURE are:\n{slot}")
 
         input_wise_targets = [tuple(element) for element in input_wise_targets]  # # locking it to a hashable type tuple in sync with its storage in unique_subsets
 
-        print(f"\nunique_subsets: {unique_subsets}")
-        print(f"\ninput_wise_targets: {input_wise_targets}\n\n")
+        # print(f"\nunique_subsets: {unique_subsets}")
+        # print(f"\ninput_wise_targets: {input_wise_targets}\n\n")
         
         input_wise_targets[:] = [[unique_subsets.index(element)] for element in input_wise_targets]
         DFA_table.append(deepcopy(input_wise_targets))
 
-    print(f"\n\n\nDFA TABLE: \n{DFA_table}")
+    # print(f"\n\n\nDFA TABLE: \n{DFA_table}")
 
-    DFA = Machine(input_symbols = input_symbols, abs_trans_values = DFA_table, hasNull = False)
+    DFA = Machine(
+        input_symbols = input_symbols, 
+        abs_trans_values = DFA_table, 
+        final_states = DFA_final_states,
+        hasNull = False,
+    )
     DFA.Finalize(last_updated = 'absolute')
     
     return DFA
 
                 
                 
-                
+def MinimizeDFA(DFA: Machine) -> Machine:
+    # TODO: sanitize input using logic for DFA check
+
+    cpy_DFA: Machine = deepcopy(DFA)
+
+    def StatesMatch(state1: int, state2: int, prev_hash_table: List[List[int]]):
+        nonlocal cpy_DFA
+        for symbol_index in range(cpy_DFA.symbols_count):
+            state1_trans: Optional[int] = cpy_DFA.absolute_transition_table[state1][symbol_index][0]
+            state2_trans: Optional[int] = cpy_DFA.absolute_transition_table[state2][symbol_index][0]
+            if (state1_trans is None) ^ (state2_trans is None): 
+                return False
+            elif state1_trans is None and state2_trans is None: 
+                continue
+            elif prev_hash_table[state1_trans] != prev_hash_table[state2_trans]:
+                return False 
+        return True
+
+    def DictReverse(ref_dict: dict):
+        result_dict = dict()
+        for key, val in ref_dict.items():
+            try:
+                _ = result_dict[val]
+                result_dict[val] += [key]
+            except:
+                result_dict[val] = [key]
+        return result_dict
+
+    prev_equivalence_class = [
+        list(set([i for i in range(len(DFA.absolute_transition_table))]) - set(deepcopy(DFA.final_states))),  # non-final states
+        deepcopy(DFA.final_states), # final states
+    ]
+
+    prev_hash_table = dict()
+    i = -1
+    for group in prev_equivalence_class:
+        i += 1
+        for state in group:
+            prev_hash_table[state] = i
+    
+    while(1):
+        # print(f"\n\nPREV EQUIVALENCE CLASS IS: {prev_equivalence_class}")
+        temp_prev_hash_table = dict()
+        new_equivalence_class: List[List[int]] = []
+        top_val = -1
+        
+        for group in prev_equivalence_class:
+        # finding equivalence status of stats in the group pair-wise
+        # two states are considered equivalent if they have matching transition sets for all inputs respectively
+            # print(f"GROUP -- {group} from eq class {prev_equivalence_class}")
+            top_val += 1
+            group_matches_hash_table = {group[0]: top_val}
+            for state in group[1:]:
+                # print(f"COVERING STATE {state}")
+                covered_states = list(group_matches_hash_table.keys())
+                for covered_state in covered_states:
+                    if StatesMatch(covered_state, state, prev_hash_table):
+                        group_matches_hash_table[state] = group_matches_hash_table[covered_state]
+                        # print(f'when covered {covered_states} matched states are {covered_state} and {state}')
+                if state in group_matches_hash_table.keys(): continue
+                # print(f'when covered {covered_states} Unmatched state {state}')
+                top_val += 1
+                group_matches_hash_table[state] = top_val
+
+            # print(f"matches hash table is:\n{group_matches_hash_table}")
+
+            temp_prev_hash_table.update(group_matches_hash_table)
+            # print(f"temp prev hash table is:\n{temp_prev_hash_table}\n")
+            new_hash_table_reversed = DictReverse(group_matches_hash_table)
+            new_equivalence_class += [new_group for _, new_group in new_hash_table_reversed.items()]
+
+        if new_equivalence_class == prev_equivalence_class: break
+        prev_equivalence_class = new_equivalence_class
+        prev_hash_table = temp_prev_hash_table
+
+    minDFA_abs_trans_table: List[List[List[Optional[int]]]] = []
+    minDFA_final_states = []
+
+    final_ordered_groups = dict()
+    i = -1
+    for group in new_equivalence_class:
+        minDFA_abs_trans_table.append(deepcopy(cpy_DFA.absolute_transition_table[group[0]]))
+        i += 1
+        if group[0] in cpy_DFA.final_states: minDFA_final_states.append(i) 
+        for state in group:
+            final_ordered_groups[state] = i
+
+    for entry in minDFA_abs_trans_table:
+        for slot in entry:
+            slot[0] = None if slot[0] is None else final_ordered_groups[slot[0]]
+          
+    minDFA: Machine = Machine(
+        input_symbols = cpy_DFA.input_symbols,
+        abs_trans_values = minDFA_abs_trans_table,
+        final_states = minDFA_final_states,
+        hasNull = False,
+    )
+    minDFA.Finalize(last_updated = 'absolute')
+            
+    return minDFA
                 
                 
         
@@ -545,17 +681,18 @@ def main():
     # INPUT RE
     # GENERATING NFA USING THOMSON'S CONSTRUCTION
     NFA = REtoNFA(reg_expression)
-    print(NFA.relative_transition_table)
-    print(NFA.absolute_transition_table)
-
+    print(f"\n\n-----NFA-----\n{NFA}")
+    # print(NFA.absolute_transition_table)
 
     # INPUT NFA
     # GENERATING DFA USING SUBSET CONSTRUCTION 
     DFA = NFAtoDFA(NFA)
-    print(DFA)
+    print(f"\n\n-----DFA-----\n{DFA}")
 
     # INPUT NON-MIMINIMUM DFA
     # MINIMIZING DFA GENERATED
+    minDFA = MinimizeDFA(DFA)
+    print(f"\n\n-----Minimum DFA-----\n{minDFA}")
     
 
 if __name__ == "__main__":
